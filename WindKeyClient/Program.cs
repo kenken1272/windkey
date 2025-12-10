@@ -112,8 +112,7 @@ namespace WindKeyClient
         private static IntPtr _hwndMessage;
         private static WndProcDelegate _wndProc;
 
-        [DllImport("user32.dll")]
-        private static extern int ShowCursor(bool bShow);
+        private static IntPtr _hTransparentCursor = IntPtr.Zero;
 
         // --- Main ---
 
@@ -124,6 +123,16 @@ namespace WindKeyClient
             Console.WriteLine("  [Ctrl + M] : Toggle Bridge Mode (ON/OFF)");
             Console.WriteLine("  [Ctrl + C] : Exit App");
             Console.WriteLine("----------------------------------------");
+
+            // Prepare transparent cursor
+            byte[] andPlane = new byte[128];
+            for (int i = 0; i < 128; i++) andPlane[i] = 0xFF;
+            byte[] xorPlane = new byte[128];
+            _hTransparentCursor = CreateCursor(IntPtr.Zero, 0, 0, 32, 32, andPlane, xorPlane);
+
+            // Ensure cursor is restored on exit
+            AppDomain.CurrentDomain.ProcessExit += (s, e) => RestoreCursor();
+            Console.CancelKeyPress += (s, e) => { RestoreCursor(); };
 
             if (!SetupSerial())
             {
@@ -144,9 +153,25 @@ namespace WindKeyClient
             
             ApplicationRun();
 
+            RestoreCursor();
             UnhookWindowsHookEx(_hookIDKeyboard);
             UnhookWindowsHookEx(_hookIDMouse);
             if (_serialPort != null && _serialPort.IsOpen) _serialPort.Close();
+        }
+
+        private static void HideCursorGlobal()
+        {
+            if (_hTransparentCursor != IntPtr.Zero)
+            {
+                SetSystemCursor(CopyIcon(_hTransparentCursor), OCR_NORMAL);
+                SetSystemCursor(CopyIcon(_hTransparentCursor), OCR_IBEAM);
+                SetSystemCursor(CopyIcon(_hTransparentCursor), OCR_HAND);
+            }
+        }
+
+        private static void RestoreCursor()
+        {
+            SystemParametersInfo(SPI_SETCURSORS, 0, IntPtr.Zero, 0);
         }
 
         private static bool SetupSerial()
@@ -184,6 +209,7 @@ namespace WindKeyClient
                 return false;
             }
         }
+
         // --- Hook Callbacks ---
 
         private static IntPtr HookCallbackKeyboard(int nCode, IntPtr wParam, IntPtr lParam)
@@ -211,11 +237,11 @@ namespace WindKeyClient
                         // Toggle Cursor Visibility
                         if (_bridgeEnabled)
                         {
-                            for(int i=0; i<100; i++) if(ShowCursor(false) < 0) break;
+                            HideCursorGlobal();
                         }
                         else
                         {
-                            for(int i=0; i<100; i++) if(ShowCursor(true) >= 0) break;
+                            RestoreCursor();
                         }
 
                         return (IntPtr)1; 
@@ -229,10 +255,6 @@ namespace WindKeyClient
                     {
                         if (isDown) SendKey(espCode, "D");
                         else if (isUp) SendKey(espCode, "U");
-                    }
-                    else
-                    {
-                        // Console.WriteLine("Unknown Key: " + vkCode);
                     }
                     return (IntPtr)1; // Block input
                 }
@@ -384,7 +406,6 @@ namespace WindKeyClient
                 try 
                 { 
                     _serialPort.WriteLine(cmd); 
-                    // Console.WriteLine("TX: " + cmd); // Uncomment for verbose debug
                 } 
                 catch (Exception ex) 
                 {
@@ -461,5 +482,22 @@ namespace WindKeyClient
 
         [DllImport("user32.dll")]
         private static extern IntPtr DispatchMessage([In] ref MSG lpMsg);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetSystemCursor(IntPtr hcur, uint id);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr CreateCursor(IntPtr hInst, int xHotSpot, int yHotSpot, int nWidth, int nHeight, byte[] pvANDPlane, byte[] pvXORPlane);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr CopyIcon(IntPtr hIcon);
+
+        [DllImport("user32.dll")]
+        private static extern bool SystemParametersInfo(uint uiAction, uint uiParam, IntPtr pvParam, uint fWinIni);
+
+        private const uint OCR_NORMAL = 32512;
+        private const uint OCR_IBEAM = 32513;
+        private const uint OCR_HAND = 32649;
+        private const uint SPI_SETCURSORS = 0x0057;
     }
 }
